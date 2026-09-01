@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
-using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Collections.Generic;
 
@@ -21,89 +19,96 @@ namespace Light_Stone_Assessment.Controllers
         [HttpGet]
         public IActionResult Get()
         {
-            var paths = new Dictionary<string, Dictionary<string, object>>();
-
-            foreach (var api in _apiProvider.ApiDescriptionGroups.Items.SelectMany(g => g.Items))
+            // Minimal OpenAPI v3 document with components for main DTOs so Swagger UI shows schemas
+            var doc = new Dictionary<string, object>
             {
-                var rawPath = api.RelativePath ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(rawPath)) continue;
-                var path = "/" + rawPath.TrimEnd('/');
-
-                if (!paths.TryGetValue(path, out var methods))
+                ["openapi"] = "3.0.1",
+                ["info"] = new Dictionary<string, object> { ["title"] = "Light Stone Assessment API", ["version"] = "v1" },
+                ["paths"] = BuildPaths(),
+                ["components"] = new Dictionary<string, object>
                 {
-                    methods = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-                    paths[path] = methods;
-                }
-
-                var method = (api.HttpMethod ?? "GET").ToLowerInvariant();
-
-                if (!methods.ContainsKey(method))
-                {
-                    // Build parameters from ApiDescription.ParameterDescriptions so path/query params are usable in the UI
-                    var parameters = new List<object>();
-                    object? requestBody = null;
-
-                    foreach (var p in api.ParameterDescriptions)
+                    ["schemas"] = new Dictionary<string, object>
                     {
-                        var source = p.Source?.Id ?? string.Empty; // e.g., "Path", "Query", "Body"
-                        var name = p.Name ?? "param";
-
-                        if (string.Equals(source, "Path", StringComparison.OrdinalIgnoreCase) || string.Equals(source, "Query", StringComparison.OrdinalIgnoreCase))
+                        ["Product"] = new { type = "object", properties = new Dictionary<string, object> { ["sku"] = new { type = "string" }, ["name"] = new { type = "string" }, ["price"] = new { type = "number", format = "decimal" }, ["stock"] = new { type = "integer" } }, required = new[] { "sku", "name", "price", "stock" } },
+                        ["CreateProductDto"] = new { type = "object", properties = new Dictionary<string, object> { ["sku"] = new { type = "string" }, ["name"] = new { type = "string" }, ["price"] = new { type = "number", format = "decimal" }, ["initialStock"] = new { type = "integer" } }, required = new[] { "sku", "name", "price", "initialStock" } },
+                        ["AdjustStockDto"] = new { type = "object", properties = new Dictionary<string, object> { ["delta"] = new { type = "integer" } }, required = new[] { "delta" } },
+                        ["OrderItemDto"] = new { type = "object", properties = new Dictionary<string, object> { ["sku"] = new { type = "string" }, ["qty"] = new { type = "integer" }, ["unitPrice"] = new { type = "number", format = "decimal" } }, required = new[] { "sku", "qty", "unitPrice" } },
+                        ["CreateOrderDto"] = new Dictionary<string, object>
                         {
-                            // determine simple type
-                            var typeName = p.Type?.Name ?? "String";
-                            var schemaType = "string";
-                            string? format = null;
-                            if (string.Equals(typeName, "Int32", StringComparison.OrdinalIgnoreCase) || string.Equals(typeName, "Int64", StringComparison.OrdinalIgnoreCase)) { schemaType = "integer"; format = "int32"; }
-                            else if (string.Equals(typeName, "Boolean", StringComparison.OrdinalIgnoreCase)) { schemaType = "boolean"; }
-                            else if (string.Equals(typeName, "Decimal", StringComparison.OrdinalIgnoreCase) || string.Equals(typeName, "Double", StringComparison.OrdinalIgnoreCase) || string.Equals(typeName, "Single", StringComparison.OrdinalIgnoreCase)) { schemaType = "number"; }
-
-                            parameters.Add(new Dictionary<string, object>
+                            ["type"] = "object",
+                            ["properties"] = new Dictionary<string, object>
                             {
-                                ["name"] = name,
-                                ["in"] = source.Equals("Path", StringComparison.OrdinalIgnoreCase) ? "path" : "query",
-                                ["required"] = source.Equals("Path", StringComparison.OrdinalIgnoreCase),
-                                ["schema"] = format == null ? new { type = schemaType } : new { type = schemaType, format }
-                            });
-                        }
-                        else if (string.Equals(source, "Body", StringComparison.OrdinalIgnoreCase) || string.Equals(source, "Form", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // represent request body as a generic object schema
-                            requestBody = new
-                            {
-                                content = new Dictionary<string, object>
+                                ["externalOrderId"] = new Dictionary<string, object> { ["type"] = "string" },
+                                ["placedAt"] = new Dictionary<string, object> { ["type"] = "string", ["format"] = "date-time" },
+                                ["items"] = new Dictionary<string, object>
                                 {
-                                    ["application/json"] = new { schema = new { type = "object" } }
+                                    ["type"] = "array",
+                                    ["items"] = new Dictionary<string, object> { ["$ref"] = "#/components/schemas/OrderItemDto" }
                                 }
-                            };
+                            },
+                            ["required"] = new[] { "externalOrderId", "placedAt", "items" }
                         }
                     }
-
-                    var op = new Dictionary<string, object>
-                    {
-                        ["summary"] = api.ActionDescriptor.DisplayName,
-                        ["responses"] = new Dictionary<string, object>
-                        {
-                            ["200"] = new { description = "OK" }
-                        }
-                    };
-
-                    if (parameters.Count > 0) op["parameters"] = parameters;
-                    if (requestBody != null) op["requestBody"] = requestBody;
-
-                    methods[method] = op;
                 }
-            }
-
-            var doc = new
-            {
-                openapi = "3.0.1",
-                info = new { title = "Light Stone Assessment API", version = "v1" },
-                paths = paths
             };
 
             var json = JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
             return Content(json, "application/json");
+        }
+
+        private object BuildPaths()
+        {
+            var paths = new Dictionary<string, object>();
+
+            // Products
+            paths["/api/products"] = new Dictionary<string, object>
+            {
+                ["post"] = new {
+                    summary = "Create product",
+                    requestBody = new { content = new Dictionary<string, object> { ["application/json"] = new { schema = new Dictionary<string, object> { ["$ref"] = "#/components/schemas/CreateProductDto" } } } },
+                    responses = new Dictionary<string, object> { ["201"] = new { description = "Created" } }
+                }
+            };
+
+            paths["/api/products/{sku}"] = new Dictionary<string, object>
+            {
+                ["get"] = new {
+                    summary = "Get product",
+                    parameters = new[] { new { name = "sku", @in = "path", required = true, schema = new { type = "string" } } },
+                    responses = new Dictionary<string, object> { ["200"] = new { description = "OK", content = new Dictionary<string, object> { ["application/json"] = new { schema = new Dictionary<string, object> { ["$ref"] = "#/components/schemas/Product" } } } } }
+                }
+            };
+
+            paths["/api/products/{sku}/stock"] = new Dictionary<string, object>
+            {
+                ["patch"] = new {
+                    summary = "Adjust stock",
+                    parameters = new[] { new { name = "sku", @in = "path", required = true, schema = new { type = "string" } } },
+                    requestBody = new { content = new Dictionary<string, object> { ["application/json"] = new { schema = new Dictionary<string, object> { ["$ref"] = "#/components/schemas/AdjustStockDto" } } } },
+                    responses = new Dictionary<string, object> { ["200"] = new { description = "OK" } }
+                }
+            };
+
+            // Orders
+            paths["/api/orders"] = new Dictionary<string, object>
+            {
+                ["post"] = new {
+                    summary = "Submit order",
+                    requestBody = new { content = new Dictionary<string, object> { ["application/json"] = new { schema = new Dictionary<string, object> { ["$ref"] = "#/components/schemas/CreateOrderDto" } } } },
+                    responses = new Dictionary<string, object> { ["201"] = new { description = "Created" }, ["400"] = new { description = "Bad Request" } }
+                }
+            };
+
+            paths["/api/sales"] = new Dictionary<string, object>
+            {
+                ["get"] = new {
+                    summary = "Daily sales summary",
+                    parameters = new[] { new { name = "start", @in = "query", required = true, schema = new { type = "string", format = "date" } }, new { name = "end", @in = "query", required = true, schema = new { type = "string", format = "date" } } },
+                    responses = new Dictionary<string, object> { ["200"] = new { description = "OK" } }
+                }
+            };
+
+            return paths;
         }
     }
 }

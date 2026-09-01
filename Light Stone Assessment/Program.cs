@@ -6,8 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
-builder.Services.AddOpenApi();
-// Use built-in OpenAPI support. Swashbuckle was removed due to incompatibility with .NET 10 in this template.
+// Register API explorer (used by our custom OpenAPI generator)
 builder.Services.AddEndpointsApiExplorer();
 
 // Configure DbContext
@@ -43,9 +42,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
-// Map the built-in OpenAPI JSON so the document is available in all environments for local testing.
-app.MapOpenApi();
-// Provide a lightweight Swagger UI that uses the generated OpenAPI JSON (tries multiple common paths).
+// Serve a lightweight Swagger UI that loads the /openapi document produced by OpenApiController
 app.MapGet("/swagger", () => Results.Content(@"<!doctype html>
 <html>
   <head>
@@ -58,26 +55,9 @@ app.MapGet("/swagger", () => Results.Content(@"<!doctype html>
     <div id='swagger-ui'></div>
     <script src='https://unpkg.com/swagger-ui-dist@4/swagger-ui-bundle.js'></script>
     <script>
-      const candidates = ['/openapi', '/openapi?format=json', '/openapi/v1', '/openapi.json', '/swagger/v1/swagger.json'];
-      async function findOpenApi() {
-        for (const url of candidates) {
-          try {
-            const resp = await fetch(url, { method: 'GET' });
-            if (resp.ok) {
-              return url;
-            }
-          } catch (e) { }
-        }
-        return null;
-      }
-      window.onload = async function() {
-        const url = await findOpenApi();
-        if (!url) {
-          document.body.innerHTML = '<h2>OpenAPI document not found on server.</h2><p>Checked: ' + JSON.stringify(candidates) + '</p>';
-          return;
-        }
+      window.onload = function() {
         SwaggerUIBundle({
-          url: url,
+          url: '/openapi',
           dom_id: '#swagger-ui'
         });
       };
